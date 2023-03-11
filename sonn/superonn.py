@@ -180,6 +180,7 @@ class SuperONN2d(nn.Module):
         verbose: bool = False
     ) -> None:
         super(SuperONN2d, self).__init__()
+        
         self.defaults = locals().copy()
         self.defaults.pop("self", None)
         self.defaults.pop("__class__", None)
