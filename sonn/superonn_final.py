@@ -34,12 +34,6 @@ def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="z
     return x
 
 
-class SuperONN2dFactory:
-    @staticmethod
-    def full_mode():
-        return SuperONN2d(3, 16*9, q=3, kernel_size=3, padding=1, groups=16*9, full_groups=16, max_shift=10, learnable=True)
-
-
 class SuperONN2d(nn.Module):
     """
     Parameters
@@ -120,9 +114,11 @@ class SuperONN2d(nn.Module):
         verbose: bool = False
     ) -> None:
         super().__init__()
-
+        # Handle defaults
+        shift_groups = in_channels if shift_groups is None else shift_groups
         # Ensures that a neuron does not process channels belonging to different full groups.
         groups = full_groups if groups == 1 else groups
+
         assert groups % full_groups == 0, f"groups ({groups}) must be divisible by full_groups ({full_groups})"
         assert shift_groups is None or in_channels % shift_groups == 0, f"in_channels ({in_channels}) must be divisible by shift_groups ({shift_groups})"
         assert (in_channels * q) % (groups / full_groups) == 0, f"in_channels * q ({in_channels * q}) must be divisible by groups / full_groups ({groups // full_groups})"
@@ -143,7 +139,7 @@ class SuperONN2d(nn.Module):
         self.stride = stride
         self.dilation = dilation
         self.groups = groups
-        self.shift_groups = in_channels if shift_groups is None else shift_groups
+        self.shift_groups = shift_groups
         self.full_groups = full_groups
         self.learnable = learnable
         self.max_shift = max_shift
