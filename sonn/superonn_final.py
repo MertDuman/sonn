@@ -124,7 +124,7 @@ class SuperONN2d(nn.Module):
         assert (in_channels * q) % (groups / full_groups) == 0, f"in_channels * q ({in_channels * q}) must be divisible by groups / full_groups ({groups // full_groups})"
         assert out_channels % groups == 0, f"out_channels ({out_channels}) must be divisible by groups ({groups})"
 
-        # Ensures that a neuron does not process channels raised to different q-powers. This may be enforced in the future.
+        # Ensures that a neuron does not process channels raised to different powers. This may be enforced in the future.
         # assert (groups // full_groups) % q == 0, f"groups / full_groups ({groups // full_groups}) must be divisible by q ({q})"
 
         self.defaults = locals().copy()
