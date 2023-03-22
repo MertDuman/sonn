@@ -1,2 +1,3 @@
-sonn/__pycache__/
-sonn.egg-info/
+*.egg-info
+*.pyc
+.idea
