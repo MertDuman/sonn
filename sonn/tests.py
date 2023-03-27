@@ -7,22 +7,22 @@ import numpy as np
 from superonn_final import SuperONN2d
 
 
-def test(sonn: SuperONN2d, cnn: nn.Conv2d, xsonn=None, xcnn=None, device=None):
-    cnn.weight.data = sonn.weight.data
-    if sonn.bias is not None:
-        cnn.bias.data = sonn.bias.data
+def test(net1: SuperONN2d, net2: nn.Conv2d, x_net1=None, x_net2=None, device=None):
+    net2.weight.data = net1.weight.data
+    if net1.bias is not None:
+        net2.bias.data = net1.bias.data
     
-    if xsonn is None:
-        xsonn = torch.randn(2, sonn.in_channels, 32, 32, device=device)
-    if xcnn is None:
-        xcnn = xsonn
+    if x_net1 is None:
+        x_net1 = torch.randn(2, net1.in_channels, 32, 32, device=device)
+    if x_net2 is None:
+        x_net2 = x_net1
 
-    y = cnn(xcnn)
-    y_sonn = sonn(xsonn)
-    return torch.allclose(y, y_sonn)
+    y_net2 = net2(x_net2)
+    y_net1 = net1(x_net1)
+    return torch.allclose(y_net2, y_net1)
 
 
-def test_all():
+def test_cnn_likeness():
     test_values = {
         'in_channels': [6, 12],
         'out_channels': [12, 24],
@@ -53,7 +53,7 @@ def test_all():
                                     sonn.to(device)
                                     cnn.to(device)
 
-                                    xsonn = torch.randn(1, in_channels, 32, 32)
+                                    xsonn = torch.randn(2, in_channels, 32, 32)
                                     xsonn = xsonn.to(device)
                                     xcnn = torch.cat([torch.cat([xsonn**qpow for qpow in range(1, q+1)], dim=1) for _ in range(full_groups)], dim=1)
                                     xcnn = xcnn.to(device)
@@ -63,5 +63,43 @@ def test_all():
                                     i += 1
 
 if __name__ == '__main__':
-    test_all()
+    test_cnn_likeness()
     print('All tests passed')
+
+
+
+
+
+
+
+
+## Unrelated
+def num_nonneg_X_that_sum_to_Y(X, Y):
+    ''' 
+    Balls and bins problem. How many ways can you distribute Y identical balls into X bins?
+    Ball: o
+    Bin separator:  |
+    Four balls to three bins:
+        One possibility:        o o | o | o
+        Another possibility:    o | o o | o
+    It is the repeating permutations of 4 o's and 2 |'s: 6! / (4! * 2!) in other words comb(6, 2)
+    '''
+    import math
+    return math.comb(Y+X-1, X-1)
+
+def num_pos_X_that_sum_to_Y(X, Y):
+    ''' 
+    Balls and bins problem, but we first distribute 1 ball to each bin so they can't be empty.
+    '''
+    import math
+    return math.comb((Y-X)+X-1, X-1)
+
+def get_nonneg_X_that_sum_to_Y(X, Y):
+    bins = np.zeros(X)
+    np.add.at(bins, np.random.randint(0, X, Y), 1)
+    return bins
+
+def get_pos_X_that_sum_to_Y(X, Y):
+    bins = np.ones(X)
+    np.add.at(bins, np.random.randint(0, X, Y - X), 1)
+    return bins
