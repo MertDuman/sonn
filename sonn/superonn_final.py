@@ -102,6 +102,7 @@ class SuperONN2d(nn.Module):
         kernel_size: int,
         q: int, 
         bias: bool = True,
+        with_w0: bool = False,
         padding: int = 0,
         stride: int = 1,
         dilation: int = 1,
@@ -135,6 +136,12 @@ class SuperONN2d(nn.Module):
         
         assert shift_groups is None or in_channels % shift_groups == 0, f"in_channels ({in_channels}) must be divisible by shift_groups ({shift_groups})"
 
+        if with_w0:
+            assert not bias, "with_w0 requires bias to be False" 
+            assert groups == 1, "with_w0 requires groups to be 1"
+            assert full_groups == 1, "with_w0 requires full_groups to be 1"
+            assert max_shift == 0, "with_w0 requires max_shift to be 0"
+
         # Ensures that a neuron does not process channels raised to different powers. This may be enforced in the future.
         # assert (groups // full_groups) % q == 0, f"groups / full_groups ({groups // full_groups}) must be divisible by q ({q})"
 
@@ -146,6 +153,7 @@ class SuperONN2d(nn.Module):
         self.out_channels = out_channels
         self.kernel_size = (kernel_size, kernel_size)
         self.q = q
+        self.with_w0 = with_w0
         self.padding = padding
         self.stride = stride
         self.dilation = dilation
@@ -173,7 +181,7 @@ class SuperONN2d(nn.Module):
                 self.weight.append(nn.Parameter(torch.empty(len(out_idx), neuron_depth, *self.kernel_size, dtype=dtype)))
                 self.bias = nn.Parameter(torch.empty(self.out_channels)) if bias else self.register_parameter('bias', None)
         else:
-            neuron_depth = (in_channels * q) // (groups // full_groups)  # (in_channels * q * full_groups) / groups
+            neuron_depth = (in_channels * (q + 1 if with_w0 else q)) // (groups // full_groups)  # (in_channels * q * full_groups) / groups
             self.weight = nn.Parameter(torch.empty(self.out_channels, neuron_depth, *self.kernel_size, dtype=dtype))  # Q x C x K x D
             self.bias = nn.Parameter(torch.empty(self.out_channels)) if bias else self.register_parameter('bias', None)
             
@@ -211,7 +219,7 @@ class SuperONN2d(nn.Module):
             x = torch.cat([(x**i) for i in range(1, self.q + 1)], dim=2)
             x = x.reshape(N, self.full_groups * self.in_channels * self.q, H, W) 
         else:
-            x = torch.cat([(x**i) for i in range(1, self.q + 1)], dim=1) 
+            x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=1) 
         
         if isinstance(self.groups, Iterable):
             y = []
