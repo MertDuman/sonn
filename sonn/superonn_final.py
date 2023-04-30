@@ -43,7 +43,7 @@ class SuperONN2d(nn.Module):
     out_channels : int
     kernel_size : int
     q : int
-        Maclaurin series coefficient.
+        Order of the Maclaurin series.
     bias : bool, default: True
     padding : int, default: 0
     stride : int, default: 1
