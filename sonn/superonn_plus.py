@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from sonn.norm_layers import LayerNormNLP2d
+
 def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="zeros"):
     # Take the shape of the input
     c, _, h, w = x.size()
@@ -34,16 +36,16 @@ def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="z
     return x
 
 
-class LayerNormNLP(nn.Module):
-    def __init__(self, channels, affine=True):
-        super().__init__()
-        self.layer_norm = nn.LayerNorm(channels, elementwise_affine=affine)
+# class LayerNormNLP(nn.Module):
+#     def __init__(self, channels, affine=True):
+#         super().__init__()
+#         self.layer_norm = nn.LayerNorm(channels, elementwise_affine=affine)
 
-    def forward(self, x):
-        x = x.permute(0, 2, 3, 1)  # n c h w -> n h w c
-        x = self.layer_norm(x)
-        x = x.permute(0, 3, 1, 2)  # n h w c -> n c h w
-        return x
+#     def forward(self, x):
+#         x = x.permute(0, 2, 3, 1)  # n c h w -> n h w c
+#         x = self.layer_norm(x)
+#         x = x.permute(0, 3, 1, 2)  # n h w c -> n c h w
+#         return x
     
     
 class SimpleGate(nn.Module):
@@ -85,8 +87,8 @@ class SuperGatedAttention2d(nn.Module):
         self.sca1 = SimpleChannelAttention(expanded // 2)
         self.sca2 = SimpleChannelAttention(expanded // 2 * q)
         
-        self.lnorm1 = LayerNormNLP(dim)
-        self.lnorm2 = LayerNormNLP(dim)
+        self.lnorm1 = LayerNormNLP2d(dim)
+        self.lnorm2 = LayerNormNLP2d(dim)
 
         self.beta = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
@@ -134,8 +136,8 @@ class SuperGatedAttention2d_Plus(nn.Module):
         self.sca1 = SimpleChannelAttention(expanded // 2)
         self.sca2 = SimpleChannelAttention(expanded // 2 * q)
         
-        self.lnorm1 = LayerNormNLP(dim)
-        self.lnorm2 = LayerNormNLP(dim)
+        self.lnorm1 = LayerNormNLP2d(dim)
+        self.lnorm2 = LayerNormNLP2d(dim)
 
         self.beta = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)

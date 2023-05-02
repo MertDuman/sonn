@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from collections.abc import Iterable 
 
 def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="zeros"):
     # Take the shape of the input
@@ -42,17 +43,21 @@ class SuperONN2d(nn.Module):
     out_channels : int
     kernel_size : int
     q : int
-        Maclaurin series coefficient.
+        Order of the Maclaurin series.
     bias : bool, default: True
     padding : int, default: 0
     stride : int, default: 1
     dilation : int, default: 1
-    groups : int, default: 1
+    groups : int or iterable of int, default: 1
         Works the same as in nn.Conv2d, except (in_channels * q * full_groups) are split into groups (as opposed to in_channels).
         If groups > 1:
             in_channels * q must be divisible by (groups / full_groups), and groups must be divisible by full_groups.
         If groups == 1 and full_groups > 1:
             groups will be set to full_groups.
+        NOTE:
+            Additionally, groups can be an iterable of int. If so, it must be of length out_channels, and the sum of its elements must be in_channels * q * full_groups.
+            This allows for more fine-grained control over the groups, and allows each neuron to process a different amount of channels.
+            !! Slows down training on the order of unique ints in groups, but may provide better learning capabilities.
     shift_groups : int, default: in_channels
         The number of groups the shifts are split into. Defaults to in_channels.
         E.g. if shift_groups = 2, the first half and the second half of the input channels will have a separate set of shifts applied to them.
@@ -63,7 +68,7 @@ class SuperONN2d(nn.Module):
         When out_channels, the layer works in full-mode, where each neuron has a separate set of shifts applied to the input.
         Anything in-between is a performance vs. runtime & memory trade-off.
         Not to be confused with shift_groups, which determines the shift independence of channels.
-        Dramatically slows down training, but may provide better learning capabilities.
+        !! Dramatically slows down training, but may provide better learning capabilities.
     learnable : bool, default: True
         If True, shifts are optimized with backpropagation.
     max_shift : float, default: 0
@@ -97,6 +102,7 @@ class SuperONN2d(nn.Module):
         kernel_size: int,
         q: int, 
         bias: bool = True,
+        with_w0: bool = False,
         padding: int = 0,
         stride: int = 1,
         dilation: int = 1,
@@ -119,10 +125,22 @@ class SuperONN2d(nn.Module):
         # Ensures that a neuron does not process channels belonging to different full groups.
         groups = full_groups if groups == 1 else groups
 
-        assert groups % full_groups == 0, f"groups ({groups}) must be divisible by full_groups ({full_groups})"
+        if isinstance(groups, Iterable):
+            assert all(isinstance(g, int) for g in groups), f"groups must be an iterable of int, but got {groups}"
+            assert len(groups) == out_channels, f"groups must be of length out_channels ({out_channels}), but got {len(groups)}"
+            assert sum(groups) == in_channels * q * full_groups, f"sum of groups ({sum(groups)}) must be in_channels * q * full_groups ({in_channels * q * full_groups})"
+        else:
+            assert groups % full_groups == 0, f"groups ({groups}) must be divisible by full_groups ({full_groups})"
+            assert (in_channels * q) % (groups / full_groups) == 0, f"in_channels * q ({in_channels * q}) must be divisible by groups / full_groups ({groups // full_groups})"
+            assert out_channels % groups == 0, f"out_channels ({out_channels}) must be divisible by groups ({groups})"
+        
         assert shift_groups is None or in_channels % shift_groups == 0, f"in_channels ({in_channels}) must be divisible by shift_groups ({shift_groups})"
-        assert (in_channels * q) % (groups / full_groups) == 0, f"in_channels * q ({in_channels * q}) must be divisible by groups / full_groups ({groups // full_groups})"
-        assert out_channels % groups == 0, f"out_channels ({out_channels}) must be divisible by groups ({groups})"
+
+        if with_w0:
+            assert not bias, "with_w0 requires bias to be False" 
+            assert groups == 1, "with_w0 requires groups to be 1"
+            assert full_groups == 1, "with_w0 requires full_groups to be 1"
+            assert max_shift == 0, "with_w0 requires max_shift to be 0"
 
         # Ensures that a neuron does not process channels raised to different powers. This may be enforced in the future.
         # assert (groups // full_groups) % q == 0, f"groups / full_groups ({groups // full_groups}) must be divisible by q ({q})"
@@ -135,6 +153,7 @@ class SuperONN2d(nn.Module):
         self.out_channels = out_channels
         self.kernel_size = (kernel_size, kernel_size)
         self.q = q
+        self.with_w0 = with_w0
         self.padding = padding
         self.stride = stride
         self.dilation = dilation
@@ -151,9 +170,20 @@ class SuperONN2d(nn.Module):
         self.dtype = dtype
         self.verbose = verbose
         
-        neuron_depth = (in_channels * q) // (groups // full_groups)
-        self.weight = nn.Parameter(torch.empty(self.out_channels, neuron_depth, *self.kernel_size, dtype=dtype))  # Q x C x K x D
-        self.bias = nn.Parameter(torch.empty(self.out_channels)) if bias else self.register_parameter('bias', None)
+        if isinstance(self.groups, Iterable):
+            val_unique, self._out_idx_map = torch.unique(torch.tensor(self.groups), return_inverse=True)
+            self._in_idx_map = torch.repeat_interleave(self._out_idx_map, torch.tensor(self.groups))
+            self._num_unique_groups = len(val_unique)
+            self.weight = nn.ParameterList()
+            for i in range(self._num_unique_groups):
+                out_idx = torch.where(self._out_idx_map == i)[0]
+                neuron_depth = val_unique[i]  # these neurons are responsible for val_unique[i] channels
+                self.weight.append(nn.Parameter(torch.empty(len(out_idx), neuron_depth, *self.kernel_size, dtype=dtype)))
+                self.bias = nn.Parameter(torch.empty(self.out_channels)) if bias else self.register_parameter('bias', None)
+        else:
+            neuron_depth = (in_channels * (q + 1 if with_w0 else q)) // (groups // full_groups)  # (in_channels * q * full_groups) / groups
+            self.weight = nn.Parameter(torch.empty(self.out_channels, neuron_depth, *self.kernel_size, dtype=dtype))  # Q x C x K x D
+            self.bias = nn.Parameter(torch.empty(self.out_channels)) if bias else self.register_parameter('bias', None)
             
         if self.learnable:
             self.shifts = nn.Parameter(torch.empty(self.full_groups, self.shift_groups, 2))
@@ -189,10 +219,23 @@ class SuperONN2d(nn.Module):
             x = torch.cat([(x**i) for i in range(1, self.q + 1)], dim=2)
             x = x.reshape(N, self.full_groups * self.in_channels * self.q, H, W) 
         else:
-            x = torch.cat([(x**i) for i in range(1, self.q + 1)], dim=1) 
+            x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=1) 
         
-        #x = torch.cat([(x**i) for i in range(1, self.q+1)],dim=1)
-        x = F.conv2d(x, self.weight, bias=self.bias, padding=self.padding, stride=self.stride, dilation=self.dilation, groups=self.groups)        
+        if isinstance(self.groups, Iterable):
+            y = []
+            resort_idx = []
+            for i in range(self._num_unique_groups):
+                in_idx = torch.where(self._in_idx_map == i)[0]
+                out_idx = torch.where(self._out_idx_map == i)[0]
+                inp = x[:, in_idx, :, :]
+                out = F.conv2d(inp, self.weight[i], bias=self.bias[out_idx], padding=self.padding, stride=self.stride, dilation=self.dilation, groups=len(out_idx))
+                y.append(out)
+                resort_idx.extend(out_idx.tolist())
+            y = torch.cat(y, dim=1)
+            resort_idx = torch.argsort(torch.tensor(resort_idx))
+            x = y[:, resort_idx, :, :]
+        else:
+            x = F.conv2d(x, self.weight, bias=self.bias, padding=self.padding, stride=self.stride, dilation=self.dilation, groups=self.groups)        
         return x
         
     def reset_parameters(self) -> None:
@@ -211,20 +254,28 @@ class SuperONN2d(nn.Module):
             with torch.no_grad():
                 self.shifts.data.round_()
 
+        # TODO: Different weight initialization for different groups, maybe concat the weights and biases and then initialize in one go?
+        if isinstance(self.groups, Iterable):
+            for i in range(self._num_unique_groups):
+                self.reset_weight(self.weight[i], self.bias)
+        else:
+            self.reset_weight(self.weight, self.bias)
+
+    def reset_weight(self, weight, bias):
         if self.weight_init == "tanh":
             gain = nn.init.calculate_gain('tanh')
-            nn.init.xavier_uniform_(self.weight, gain=gain)
-            if self.bias is not None:
-                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            nn.init.xavier_uniform_(weight, gain=gain)
+            if bias is not None:
+                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(weight)
                 bound = 1 / math.sqrt(fan_in)
-                nn.init.uniform_(self.bias, -bound, bound)
+                nn.init.uniform_(bias, -bound, bound)
         elif self.weight_init == "selu":
             # https://github.com/bioinf-jku/SNNs
             # https://github.com/bioinf-jku/SNNs/blob/master/Pytorch/SelfNormalizingNetworks_CNN_MNIST.ipynb
             # https://github.com/bioinf-jku/SNNs/blob/master/Pytorch/SelfNormalizingNetworks_CNN_CIFAR10.ipynb
-            nn.init.kaiming_normal_(self.weight, mode="fan_in", nonlinearity="linear")
-            if self.bias is not None:
-                nn.init.zeros_(self.bias)
+            nn.init.kaiming_normal_(weight, mode="fan_in", nonlinearity="linear")
+            if bias is not None:
+                nn.init.zeros_(bias)
 
     def _even_groups(self, n, g):
         """Evenly split n into g groups such that the first n % g groups have n // g + 1 elements and the rest have n // g elements."""
