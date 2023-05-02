@@ -34,6 +34,16 @@ def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="z
 
     return x
 
+def take_qth_power(x, q, dim=1, with_w0=False):
+    if with_w0:
+        powers = torch.arange(0, q+1).repeat(x.shape[dim])
+        x = x.repeat_interleave(q+1, dim=dim)
+    else:
+        powers = torch.arange(1, q+1).repeat(x.shape[dim])
+        x = x.repeat_interleave(q, dim=dim)
+    y = torch.pow(x.transpose(dim, -1), powers)
+    y = y.transpose(dim, -1)
+    return y
 
 class SuperONN2d(nn.Module):
     """
@@ -136,12 +146,6 @@ class SuperONN2d(nn.Module):
         
         assert shift_groups is None or in_channels % shift_groups == 0, f"in_channels ({in_channels}) must be divisible by shift_groups ({shift_groups})"
 
-        if with_w0:
-            assert not bias, "with_w0 requires bias to be False" 
-            assert groups == 1, "with_w0 requires groups to be 1"
-            assert full_groups == 1, "with_w0 requires full_groups to be 1"
-            assert max_shift == 0, "with_w0 requires max_shift to be 0"
-
         # Ensures that a neuron does not process channels raised to different powers. This may be enforced in the future.
         # assert (groups // full_groups) % q == 0, f"groups / full_groups ({groups // full_groups}) must be divisible by q ({q})"
 
@@ -216,10 +220,13 @@ class SuperONN2d(nn.Module):
             # (N, full_groups, q * in_channels, H, W) => (N, full_groups * q * in_channels, H, W)
             # We have full_groups many q many in_channels x H x W tensors.
             x = x.reshape(N, self.full_groups, self.in_channels, H, W)
-            x = torch.cat([(x**i) for i in range(1, self.q + 1)], dim=2)
-            x = x.reshape(N, self.full_groups * self.in_channels * self.q, H, W) 
+            #x = torch.cat([(x**i) for i in range(1, self.q + 1)], dim=2)
+            x = take_qth_power(x, self.q, dim=2, with_w0=self.with_w0)
+            x = x.reshape(N, self.full_groups * self.in_channels * (self.q if not self.with_w0 else (self.q + 1)), H, W) 
+            
         else:
-            x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=1) 
+            x = take_qth_power(x, self.q, dim=1, with_w0=self.with_w0)
+            #x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=1) 
         
         if isinstance(self.groups, Iterable):
             y = []

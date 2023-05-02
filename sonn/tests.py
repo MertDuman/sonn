@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 import numpy as np
 
-from superonn_final import SuperONN2d
+from superonn_final import SuperONN2d, take_qth_power
 
 
 def test(net1: SuperONN2d, net2: nn.Conv2d, x_net1=None, x_net2=None, device=None):
@@ -48,14 +48,15 @@ def test_cnn_likeness():
                                 for q in test_values['q']:
 
                                     cnn_out_channels = out_channels * full_groups * q  # this many channels will be created by the SuperONN2d
-                                    sonn = SuperONN2d(in_channels, out_channels, kernel_size=kernel_size, q=q, padding=kernel_size//2, bias=bias, groups=groups, full_groups=full_groups, max_shift=max_shift, shift_init='zeros')
+                                    sonn = SuperONN2d(in_channels, out_channels, kernel_size=kernel_size, q=q, padding=kernel_size//2, bias=bias, groups=groups, full_groups=full_groups, max_shift=max_shift, shift_init='zeros', with_w0=True)
                                     cnn = nn.Conv2d(in_channels, cnn_out_channels, kernel_size=kernel_size, padding=kernel_size//2, bias=bias, groups=sonn.groups)
                                     sonn.to(device)
                                     cnn.to(device)
 
                                     xsonn = torch.randn(2, in_channels, 32, 32)
                                     xsonn = xsonn.to(device)
-                                    xcnn = torch.cat([torch.cat([xsonn**qpow for qpow in range(1, q+1)], dim=1) for _ in range(full_groups)], dim=1)
+                                    xcnn = torch.cat([take_qth_power(xsonn, q, with_w0=True) for _ in range(full_groups)], dim=1)
+                                    #xcnn = torch.cat([torch.cat([xsonn**qpow for qpow in range(1, q+1)], dim=1) for _ in range(full_groups)], dim=1)
                                     xcnn = xcnn.to(device)
 
                                     assert test(sonn, cnn, xsonn, xcnn), f'test failed: {sonn}'
