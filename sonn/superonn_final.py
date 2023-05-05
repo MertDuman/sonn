@@ -36,10 +36,10 @@ def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="z
 
 def take_qth_power(x, q, dim=1, with_w0=False):
     if with_w0:
-        powers = torch.arange(0, q+1).repeat(x.shape[dim])
+        powers = torch.arange(0, q+1, device=x.device).repeat(x.shape[dim])
         x = x.repeat_interleave(q+1, dim=dim)
     else:
-        powers = torch.arange(1, q+1).repeat(x.shape[dim])
+        powers = torch.arange(1, q+1, device=x.device).repeat(x.shape[dim])
         x = x.repeat_interleave(q, dim=dim)
     y = torch.pow(x.transpose(dim, -1), powers)
     y = y.transpose(dim, -1)
