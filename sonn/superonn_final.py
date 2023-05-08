@@ -53,17 +53,23 @@ class SuperONN2d(nn.Module):
     out_channels : int
     kernel_size : int
     q : int
-        Order of the Maclaurin series.
+        Order of the Maclaurin series: w0 + w1 * x + w2 * x^2 + ... + wq * x^q
     bias : bool, default: True
+    with_w0 : bool, default: False
+        Whether to include a separate bias term for the Maclaurin series.
+        Remember the Maclaurin series: w0 + w1 * x + w2 * x^2 + ... + wq * x^q
+        When with_w0 is False, w0 is the bias term that all neurons share.
+        When with_w0 is True, w0 is a separate bias term for each neuron. The computational effect of settings this to True is similar to increasing q by 1.
     padding : int, default: 0
     stride : int, default: 1
     dilation : int, default: 1
-    groups : int or iterable of int, default: 1
+    groups : int or iterable of int or str, default: 1
         Works the same as in nn.Conv2d, except (in_channels * q * full_groups) are split into groups (as opposed to in_channels).
         If groups > 1:
             in_channels * q must be divisible by (groups / full_groups), and groups must be divisible by full_groups.
         If groups == 1 and full_groups > 1:
             groups will be set to full_groups.
+        If groups == 'depthwise', each channel will be processed by one neuron. Note that if q > 1, each maclaurin series will be processed by one neuron.
         NOTE:
             Additionally, groups can be an iterable of int. If so, it must be of length out_channels, and the sum of its elements must be in_channels * q * full_groups.
             This allows for more fine-grained control over the groups, and allows each neuron to process a different amount of channels.
@@ -132,22 +138,31 @@ class SuperONN2d(nn.Module):
         super().__init__()
         # Handle defaults
         shift_groups = in_channels if shift_groups is None else shift_groups
-        # Ensures that a neuron does not process channels belonging to different full groups.
-        groups = full_groups if groups == 1 else groups
+        
+        if groups == 1:
+            # Ensures that a neuron does not process channels belonging to different full groups.
+            groups = full_groups
+        elif groups == "depthwise":
+            groups = in_channels * full_groups
 
+        self.impl_q = q + 1 if with_w0 else q
+        impl_q_str = "(q + 1)" if with_w0 else "q"
         if isinstance(groups, Iterable):
             assert all(isinstance(g, int) for g in groups), f"groups must be an iterable of int, but got {groups}"
             assert len(groups) == out_channels, f"groups must be of length out_channels ({out_channels}), but got {len(groups)}"
-            assert sum(groups) == in_channels * q * full_groups, f"sum of groups ({sum(groups)}) must be in_channels * q * full_groups ({in_channels * q * full_groups})"
+            assert sum(groups) == in_channels * self.impl_q * full_groups, f"sum of groups ({sum(groups)}) must be in_channels * {impl_q_str} * full_groups ({in_channels * self.impl_q * full_groups})"
         else:
-            assert groups % full_groups == 0, f"groups ({groups}) must be divisible by full_groups ({full_groups})"
-            assert (in_channels * q) % (groups / full_groups) == 0, f"in_channels * q ({in_channels * q}) must be divisible by groups / full_groups ({groups // full_groups})"
-            assert out_channels % groups == 0, f"out_channels ({out_channels}) must be divisible by groups ({groups})"
-        
-        assert shift_groups is None or in_channels % shift_groups == 0, f"in_channels ({in_channels}) must be divisible by shift_groups ({shift_groups})"
+            assert out_channels % groups == 0, f"out_channels ({out_channels}) must be a multiple of groups ({groups})"
 
-        # Ensures that a neuron does not process channels raised to different powers. This may be enforced in the future.
-        # assert (groups // full_groups) % q == 0, f"groups / full_groups ({groups // full_groups}) must be divisible by q ({q})"
+            # Ensures that a neuron does not process channels belonging to different full groups.
+            assert groups % full_groups == 0, f"groups ({groups}) must be a multiple of full_groups ({full_groups}), so that neurons do not process channels belonging to different full groups"
+            assert (in_channels * self.impl_q * full_groups) % groups == 0, f"in_channels * {impl_q_str} * full_groups ({in_channels * self.impl_q * full_groups}) must be a multiple of groups ({groups})"
+            
+            # Ensures that a neuron does not process channels belonging to a different maclaurin series.
+            num_el = (in_channels * self.impl_q * full_groups) // groups
+            assert num_el % self.impl_q == 0, f"Channels per group ({num_el}) must be a multiple of {impl_q_str} ({self.impl_q}), so that neurons do not process channels belonging to a different maclaurin series"
+
+        assert shift_groups is None or in_channels % shift_groups == 0, f"in_channels ({in_channels}) must be divisible by shift_groups ({shift_groups})"
 
         self.defaults = locals().copy()
         self.defaults.pop("self", None)
@@ -185,7 +200,7 @@ class SuperONN2d(nn.Module):
                 self.weight.append(nn.Parameter(torch.empty(len(out_idx), neuron_depth, *self.kernel_size, dtype=dtype)))
                 self.bias = nn.Parameter(torch.empty(self.out_channels)) if bias else self.register_parameter('bias', None)
         else:
-            neuron_depth = (in_channels * (q + 1 if with_w0 else q)) // (groups // full_groups)  # (in_channels * q * full_groups) / groups
+            neuron_depth = (in_channels * self.impl_q * full_groups) // groups  # (in_channels * q * full_groups) / groups
             self.weight = nn.Parameter(torch.empty(self.out_channels, neuron_depth, *self.kernel_size, dtype=dtype))  # Q x C x K x D
             self.bias = nn.Parameter(torch.empty(self.out_channels)) if bias else self.register_parameter('bias', None)
             
