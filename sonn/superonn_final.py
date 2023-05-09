@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import warnings
 from collections.abc import Iterable 
 
 def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="zeros"):
@@ -160,7 +161,8 @@ class SuperONN2d(nn.Module):
             
             # Ensures that a neuron does not process channels belonging to a different maclaurin series.
             num_el = (in_channels * self.impl_q * full_groups) // groups
-            assert num_el % self.impl_q == 0, f"Channels per group ({num_el}) must be a multiple of {impl_q_str} ({self.impl_q}), so that neurons do not process channels belonging to a different maclaurin series"
+            if num_el % self.impl_q == 0:
+                warnings.warn(f"Channels per group ({num_el}) must be a multiple of {impl_q_str} ({self.impl_q}), so that neurons do not process channels belonging to a different maclaurin series", source=SuperONN2d)
 
         assert shift_groups is None or in_channels % shift_groups == 0, f"in_channels ({in_channels}) must be divisible by shift_groups ({shift_groups})"
 
