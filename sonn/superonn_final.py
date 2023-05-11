@@ -134,7 +134,8 @@ class SuperONN2d(nn.Module):
         shift_init: str = "random",
         weight_init: str = "tanh",
         dtype: str = None,
-        verbose: bool = False
+        verbose: bool = False,
+        new_version: bool = False,
     ) -> None:
         super().__init__()
         # Handle defaults
@@ -162,7 +163,8 @@ class SuperONN2d(nn.Module):
             # Ensures that a neuron does not process channels belonging to a different maclaurin series.
             num_el = (in_channels * self.impl_q * full_groups) // groups
             if num_el % self.impl_q == 0:
-                warnings.warn(f"Channels per group ({num_el}) must be a multiple of {impl_q_str} ({self.impl_q}), so that neurons do not process channels belonging to a different maclaurin series", source=SuperONN2d)
+                pass
+                #warnings.warn(f"Channels per group ({num_el}) must be a multiple of {impl_q_str} ({self.impl_q}), so that neurons do not process channels belonging to a different maclaurin series", source=SuperONN2d)
 
         assert shift_groups is None or in_channels % shift_groups == 0, f"in_channels ({in_channels}) must be divisible by shift_groups ({shift_groups})"
 
@@ -190,6 +192,7 @@ class SuperONN2d(nn.Module):
         self.weight_init = weight_init
         self.dtype = dtype
         self.verbose = verbose
+        self.new_version = new_version
         
         if isinstance(self.groups, Iterable):
             val_unique, self._out_idx_map = torch.unique(torch.tensor(self.groups), return_inverse=True)
@@ -237,13 +240,17 @@ class SuperONN2d(nn.Module):
             # (N, full_groups, q * in_channels, H, W) => (N, full_groups * q * in_channels, H, W)
             # We have full_groups many q many in_channels x H x W tensors.
             x = x.reshape(N, self.full_groups, self.in_channels, H, W)
-            #x = torch.cat([(x**i) for i in range(1, self.q + 1)], dim=2)
-            x = take_qth_power(x, self.q, dim=2, with_w0=self.with_w0)
+            if self.new_version:
+                x = take_qth_power(x, self.q, dim=2, with_w0=self.with_w0)
+            else:
+                x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=2)
             x = x.reshape(N, self.full_groups * self.in_channels * (self.q if not self.with_w0 else (self.q + 1)), H, W) 
             
         else:
-            x = take_qth_power(x, self.q, dim=1, with_w0=self.with_w0)
-            #x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=1) 
+            if self.new_version:
+                x = take_qth_power(x, self.q, dim=1, with_w0=self.with_w0)
+            else:
+                x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=1) 
         
         if isinstance(self.groups, Iterable):
             y = []
