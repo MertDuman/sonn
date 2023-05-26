@@ -104,7 +104,9 @@ class SuperONN2d(nn.Module):
         The default value the shifts take. When learnable is False and shift_init is 'zeros', this is identical to SelfONNs.
         When 'zeros', shifts start at zero.
         When 'random', shifts are uniformly distributed between [-max_shift, max_shift].
+        When 'random_int', shifts are uniformly distributed between [-max_shift, max_shift] rounded to closest integer.
         When 'half', shifts are uniformly distributed between [-max_shift / 2, max_shift / 2].
+        When 'half_int', shifts are uniformly distributed between [-max_shift / 2, max_shift / 2] rounded to closest integer.
     weight_init : one of ['tanh', 'selu'], default: 'tanh'
         Determines how to initialize the weights based on the activation function used in the network. If unsure, keep as default.
     dtype : str, default: None
@@ -131,7 +133,7 @@ class SuperONN2d(nn.Module):
         rounded_shifts: bool = False,
         split_iterations: int = 1,
         fill_mode: str = "zeros",
-        shift_init: str = "random",
+        shift_init: str = "random_int",
         weight_init: str = "tanh",
         dtype: str = None,
         verbose: bool = False,
@@ -272,8 +274,14 @@ class SuperONN2d(nn.Module):
     def reset_parameters(self) -> None:
         if self.shift_init == "random":
             nn.init.uniform_(self.shifts, -self.max_shift, self.max_shift)
+        elif self.shift_init == "random_int":
+            nn.init.uniform_(self.shifts, -self.max_shift, self.max_shift)
+            torch.round_(self.shifts)
         elif self.shift_init == "half":
             nn.init.uniform_(self.shifts, -self.max_shift // 2, self.max_shift // 2)
+        elif self.shift_init == "half_int":
+            nn.init.uniform_(self.shifts, -self.max_shift // 2, self.max_shift // 2)
+            torch.round_(self.shifts)
         elif self.shift_init == "zeros":
             nn.init.zeros_(self.shifts)
 
