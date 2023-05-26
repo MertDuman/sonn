@@ -276,12 +276,14 @@ class SuperONN2d(nn.Module):
             nn.init.uniform_(self.shifts, -self.max_shift, self.max_shift)
         elif self.shift_init == "random_int":
             nn.init.uniform_(self.shifts, -self.max_shift, self.max_shift)
-            torch.round_(self.shifts)
+            with torch.no_grad():
+                torch.round_(self.shifts)
         elif self.shift_init == "half":
             nn.init.uniform_(self.shifts, -self.max_shift // 2, self.max_shift // 2)
         elif self.shift_init == "half_int":
             nn.init.uniform_(self.shifts, -self.max_shift // 2, self.max_shift // 2)
-            torch.round_(self.shifts)
+            with torch.no_grad():
+                torch.round_(self.shifts)
         elif self.shift_init == "zeros":
             nn.init.zeros_(self.shifts)
 
