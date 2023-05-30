@@ -35,16 +35,13 @@ def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="z
 
     return x
 
-def take_qth_power(x, q, dim=1, with_w0=False):
-    if with_w0:
-        powers = torch.arange(0, q+1, device=x.device).repeat(x.shape[dim])
-        x = x.repeat_interleave(q+1, dim=dim)
-    else:
-        powers = torch.arange(1, q+1, device=x.device).repeat(x.shape[dim])
-        x = x.repeat_interleave(q, dim=dim)
-    y = torch.pow(x.transpose(dim, -1), powers)
-    y = y.transpose(dim, -1)
-    return y
+def take_qth_power(x, q, with_w0=False):
+    N, C, H, W = x.shape
+    start = 0 if with_w0 else 1
+    total = q+1 if with_w0 else q
+    x = torch.cat([x**i for i in range(start, q+1)], dim=1)
+    x = x.reshape(N, total, C, H, W).transpose(1, 2).reshape(N, C*total, H, W)
+    return x
 
 class SuperONN2d(nn.Module):
     """
