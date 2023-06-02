@@ -50,6 +50,18 @@ class Upsample2d(nn.Module):
         )
     def forward(self, x):
         return self.layers(x)
+    
+
+class Upsample2d_ReverseOrder(nn.Module):
+    ''' Upsample H and W by 2, downsample C by 2. '''
+    def __init__(self, dim):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.PixelShuffle(2),
+            nn.Conv2d(dim // 4, dim // 2, kernel_size=3, stride=1, padding=1, bias=False)
+        )
+    def forward(self, x):
+        return self.layers(x)
 
 
 class Upsample2d_ONN(nn.Module):

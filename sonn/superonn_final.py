@@ -36,11 +36,17 @@ def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="z
     return x
 
 def take_qth_power(x, q, with_w0=False):
-    N, C, H, W = x.shape
+    if x.ndim == 4:
+        N, C, H, W = x.shape
+    elif x.ndim == 5:
+        N, FG, C, H, W = x.shape
     start = 0 if with_w0 else 1
     total = q+1 if with_w0 else q
     x = torch.cat([x**i for i in range(start, q+1)], dim=1)
-    x = x.reshape(N, total, C, H, W).transpose(1, 2).reshape(N, C*total, H, W)
+    if x.ndim == 4:
+        x = x.reshape(N, total, C, H, W).transpose(1, 2).reshape(N, C*total, H, W)
+    elif x.ndim == 5:
+        x = x.reshape(N, FG, total, C, H, W).transpose(2, 3).reshape(N, FG, C*total, H, W)
     return x
 
 class SuperONN2d(nn.Module):
@@ -211,6 +217,7 @@ class SuperONN2d(nn.Module):
         if self.learnable:
             self.shifts = nn.Parameter(torch.empty(self.full_groups, self.shift_groups, 2))
         else:
+            # TODO: if max_shift is 0, there is no need to store the shifts
             self.register_buffer('shifts', torch.empty(self.full_groups, self.shift_groups, 2))
         
         self.reset_parameters()
@@ -240,14 +247,14 @@ class SuperONN2d(nn.Module):
             # We have full_groups many q many in_channels x H x W tensors.
             x = x.reshape(N, self.full_groups, self.in_channels, H, W)
             if self.new_version:
-                x = take_qth_power(x, self.q, dim=2, with_w0=self.with_w0)
+                x = take_qth_power(x, self.q, with_w0=self.with_w0)
             else:
                 x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=2)
             x = x.reshape(N, self.full_groups * self.in_channels * (self.q if not self.with_w0 else (self.q + 1)), H, W) 
             
         else:
             if self.new_version:
-                x = take_qth_power(x, self.q, dim=1, with_w0=self.with_w0)
+                x = take_qth_power(x, self.q, with_w0=self.with_w0)
             else:
                 x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=1) 
         
