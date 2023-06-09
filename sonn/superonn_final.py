@@ -73,7 +73,7 @@ class SuperONN2d(nn.Module):
             in_channels * q must be divisible by (groups / full_groups), and groups must be divisible by full_groups.
         If groups == 1 and full_groups > 1:
             groups will be set to full_groups.
-        If groups == 'depthwise', each channel will be processed by one neuron. Note that if q > 1, each maclaurin series will be processed by one neuron.
+        If groups == 'depthwise', each channel will be processed by one neuron (groups == in_channels). Note that if q > 1, this corresponds to each maclaurin series being processed by one neuron.
         NOTE:
             Additionally, groups can be an iterable of int. If so, it must be of length out_channels, and the sum of its elements must be in_channels * q * full_groups.
             This allows for more fine-grained control over the groups, and allows each neuron to process a different amount of channels.
@@ -116,6 +116,8 @@ class SuperONN2d(nn.Module):
         The datatype of the weights. If None, the default datatype is used.
     verbose : bool, default: False
         Whether to print the parameters of the layer.
+    new_version : bool, default: False
+        Whether to use the new version of stacking Q powers of x. This is required if using group convolutions, so that a neuron processes the powers of the same channel.
     """
     def __init__(
         self,
