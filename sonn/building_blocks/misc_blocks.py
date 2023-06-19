@@ -2,76 +2,81 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sonn.superonn_final import SuperONN2d
+from sonn.norm_layers import LayerNormNLP2d
 
 
 class Downsample2d(nn.Module):
     ''' Downsample H and W by 2, upsample C by 2. '''
-    def __init__(self, dim, kernel_size=3):
+    def __init__(self, dim, kernel_size=3, shuffle_first=False):
         super().__init__()
-        self.layers = nn.Sequential(
-            nn.Conv2d(dim, dim // 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False),
-            nn.PixelUnshuffle(2)
-        )
+        if shuffle_first:
+            self.layers = nn.Sequential(
+                nn.PixelUnshuffle(2),
+                nn.Conv2d(dim * 4, dim * 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False),
+            )
+        else:
+            self.layers = nn.Sequential(
+                nn.Conv2d(dim, dim // 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False),
+                nn.PixelUnshuffle(2)
+            )
     def forward(self, x):
         return self.layers(x)
     
 
-class Downsample2d_ReverseOrder(nn.Module):
-    ''' Downsample H and W by 2, upsample C by 2. Rarely used. First applies PixelUnshuffle, then Conv2d. '''
-    def __init__(self, dim, kernel_size=3):
-        super().__init__()
-        self.layers = nn.Sequential(
-            nn.PixelUnshuffle(2),
-            nn.Conv2d(dim * 4, dim * 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False),
-        )
-    def forward(self, x):
-        return self.layers(x)
-    
-
-class Downsample2d_ONN(nn.Module):
+class DownsampleONN2d(nn.Module):
     ''' Downsample H and W by 2, upsample C by 2. '''
-    def __init__(self, dim, kernel_size=3, **kwargs):
+    def __init__(self, dim, kernel_size=3, shuffle_first=False, **onn_kwargs):
         super().__init__()
-        self.layers = nn.Sequential(
-            SuperONN2d(dim, dim // 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False, **kwargs),
-            nn.PixelUnshuffle(2)
-        )
+        if shuffle_first:
+            self.layers = nn.Sequential(
+                nn.PixelUnshuffle(2),
+                LayerNormNLP2d(dim * 4),
+                SuperONN2d(dim * 4, dim * 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False, **onn_kwargs),
+            )
+        else:
+            self.layers = nn.Sequential(
+                LayerNormNLP2d(dim),
+                SuperONN2d(dim, dim // 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False, **onn_kwargs),
+                nn.PixelUnshuffle(2)
+            )
     def forward(self, x):
         return self.layers(x)
 
 
 class Upsample2d(nn.Module):
     ''' Upsample H and W by 2, downsample C by 2. '''
-    def __init__(self, dim, kernel_size=3):
+    def __init__(self, dim, kernel_size=3, shuffle_first=True):
         super().__init__()
-        self.layers = nn.Sequential(
-            nn.Conv2d(dim, dim * 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False),
-            nn.PixelShuffle(2)
-        )
+        if shuffle_first:
+            self.layers = nn.Sequential(
+                nn.PixelShuffle(2),
+                nn.Conv2d(dim // 4, dim // 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False)
+            )
+        else:
+            self.layers = nn.Sequential(
+                nn.Conv2d(dim, dim * 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False),
+                nn.PixelShuffle(2)
+            )
     def forward(self, x):
         return self.layers(x)
     
 
-class Upsample2d_ReverseOrder(nn.Module):
+class UpsampleONN2d(nn.Module):
     ''' Upsample H and W by 2, downsample C by 2. '''
-    def __init__(self, dim, kernel_size=3):
+    def __init__(self, dim, kernel_size=3, shuffle_first=True, **onn_kwargs):
         super().__init__()
-        self.layers = nn.Sequential(
-            nn.PixelShuffle(2),
-            nn.Conv2d(dim // 4, dim // 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False)
-        )
-    def forward(self, x):
-        return self.layers(x)
-
-
-class Upsample2d_ONN(nn.Module):
-    ''' Upsample H and W by 2, downsample C by 2. '''
-    def __init__(self, dim, kernel_size=3, **kwargs):
-        super().__init__()
-        self.layers = nn.Sequential(
-            SuperONN2d(dim, dim * 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False, **kwargs),
-            nn.PixelShuffle(2)
-        )
+        if shuffle_first:
+            self.layers = nn.Sequential(
+                nn.PixelShuffle(2),
+                LayerNormNLP2d(dim // 4),
+                SuperONN2d(dim // 4, dim // 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False, **onn_kwargs),
+            )
+        else:
+            self.layers = nn.Sequential(
+                LayerNormNLP2d(dim),
+                SuperONN2d(dim, dim * 2, kernel_size=kernel_size, padding=kernel_size // 2, bias=False, **onn_kwargs),
+                nn.PixelShuffle(2)
+            )
     def forward(self, x):
         return self.layers(x)
     
