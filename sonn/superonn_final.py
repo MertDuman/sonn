@@ -58,16 +58,16 @@ class SuperONN2d(nn.Module):
     kernel_size : int
     q : int
         Order of the Maclaurin series: w0 + w1 * x + w2 * x^2 + ... + wq * x^q
-    bias : bool, default: True
-    with_w0 : bool, default: False
+    bias : bool
+    with_w0 : bool
         Whether to include a separate bias term for the Maclaurin series.
         Remember the Maclaurin series: w0 + w1 * x + w2 * x^2 + ... + wq * x^q
         When with_w0 is False, w0 is the bias term that all neurons share.
         When with_w0 is True, w0 is a separate bias term for each neuron. The computational effect of settings this to True is similar to increasing q by 1.
-    padding : int, default: 0
-    stride : int, default: 1
-    dilation : int, default: 1
-    groups : int or iterable of int or str, default: 1
+    padding : int
+    stride : int
+    dilation : int
+    groups : int or iterable of int or str
         Works the same as in nn.Conv2d, except (in_channels * q * full_groups) are split into groups (as opposed to in_channels).
         If groups > 1:
             in_channels * q must be divisible by (groups / full_groups), and groups must be divisible by full_groups.
@@ -82,41 +82,41 @@ class SuperONN2d(nn.Module):
         The number of groups the shifts are split into. Defaults to in_channels.
         E.g. if shift_groups = 2, the first half and the second half of the input channels will have a separate set of shifts applied to them.
              Thus, by default, all input channels have a separate set of shifts applied to them.
-    full_groups : int, default: 1
+    full_groups : int
         Number of neuron groups in full mode. The layer will produce this many copies of the input, where each one is shifted independently.
         When 1, the layer works in semi-mode, where the shifts are shared across neurons.
         When out_channels, the layer works in full-mode, where each neuron has a separate set of shifts applied to the input.
         Anything in-between is a performance vs. runtime & memory trade-off.
         Not to be confused with shift_groups, which determines the shift independence of channels.
         !! Dramatically slows down training, but may provide better learning capabilities.
-    learnable : bool, default: True
+    learnable : bool
         If True, shifts are optimized with backpropagation.
-    max_shift : float, default: 0
+    max_shift : float
         Maximum possible value the shifts can take.
-    rounded_shifts : bool, default: False
+    rounded_shifts : bool
         Whether shifts are rounded to the nearest integer.
-    split_iterations : int, default: 1
+    split_iterations : int
         When training in full_mode (e.g. full_groups > 1), memory can be an issue, as the input needs to be copied many times.
         When split_iterations > 1, the forward pass is done in 'split_iterations' amount of iterations, increasing runtime but lowering memory consumption.
-    fill_mode : one of ['zeros', 'reflection', 'border'], default: 'zeros'
+    fill_mode : one of ['zeros', 'reflection', 'border']
         The fill applied when the input is shifted, thus removing some pixels.
         When 'zeros', the removed pixels are filled with zero.
         When 'reflection', the removed pixels are filled with values when the input is reflected at the border.
         When 'border', the removed pixels are filled with values at the border.
-    shift_init : one of ['random', 'half', 'zeros'], default: 'random'
+    shift_init : one of ['random', 'half', 'zeros']
         The default value the shifts take. When learnable is False and shift_init is 'zeros', this is identical to SelfONNs.
         When 'zeros', shifts start at zero.
         When 'random', shifts are uniformly distributed between [-max_shift, max_shift].
         When 'random_int', shifts are uniformly distributed between [-max_shift, max_shift] rounded to closest integer.
         When 'half', shifts are uniformly distributed between [-max_shift / 2, max_shift / 2].
         When 'half_int', shifts are uniformly distributed between [-max_shift / 2, max_shift / 2] rounded to closest integer.
-    weight_init : one of ['tanh', 'selu'], default: 'tanh'
+    weight_init : one of ['tanh', 'selu']
         Determines how to initialize the weights based on the activation function used in the network. If unsure, keep as default.
-    dtype : str, default: None
+    dtype : str
         The datatype of the weights. If None, the default datatype is used.
-    verbose : bool, default: False
+    verbose : bool
         Whether to print the parameters of the layer.
-    new_version : bool, default: False
+    new_version : bool
         Whether to use the new version of stacking Q powers of x. This is required if using group convolutions, so that a neuron processes the powers of the same channel.
     """
     def __init__(
@@ -154,22 +154,22 @@ class SuperONN2d(nn.Module):
         elif groups == "depthwise":
             groups = in_channels * full_groups
 
-        self.impl_q = q + 1 if with_w0 else q
+        self._impl_q = q + 1 if with_w0 else q
         impl_q_str = "(q + 1)" if with_w0 else "q"
         if isinstance(groups, Iterable):
             assert all(isinstance(g, int) for g in groups), f"groups must be an iterable of int, but got {groups}"
             assert len(groups) == out_channels, f"groups must be of length out_channels ({out_channels}), but got {len(groups)}"
-            assert sum(groups) == in_channels * self.impl_q * full_groups, f"sum of groups ({sum(groups)}) must be in_channels * {impl_q_str} * full_groups ({in_channels * self.impl_q * full_groups})"
+            assert sum(groups) == in_channels * self._impl_q * full_groups, f"sum of groups ({sum(groups)}) must be in_channels * {impl_q_str} * full_groups ({in_channels * self._impl_q * full_groups})"
         else:
             assert out_channels % groups == 0, f"out_channels ({out_channels}) must be a multiple of groups ({groups})"
 
             # Ensures that a neuron does not process channels belonging to different full groups.
             assert groups % full_groups == 0, f"groups ({groups}) must be a multiple of full_groups ({full_groups}), so that neurons do not process channels belonging to different full groups"
-            assert (in_channels * self.impl_q * full_groups) % groups == 0, f"in_channels * {impl_q_str} * full_groups ({in_channels * self.impl_q * full_groups}) must be a multiple of groups ({groups})"
+            assert (in_channels * self._impl_q * full_groups) % groups == 0, f"in_channels * {impl_q_str} * full_groups ({in_channels * self._impl_q * full_groups}) must be a multiple of groups ({groups})"
             
             # Ensures that a neuron does not process channels belonging to a different maclaurin series.
-            num_el = (in_channels * self.impl_q * full_groups) // groups
-            if num_el % self.impl_q == 0:
+            num_el = (in_channels * self._impl_q * full_groups) // groups
+            if num_el % self._impl_q == 0:
                 pass
                 #warnings.warn(f"Channels per group ({num_el}) must be a multiple of {impl_q_str} ({self.impl_q}), so that neurons do not process channels belonging to a different maclaurin series", source=SuperONN2d)
 
@@ -183,11 +183,13 @@ class SuperONN2d(nn.Module):
         self.out_channels = out_channels
         self.kernel_size = (kernel_size, kernel_size)
         self.q = q
+        self.use_bias = bias
         self.with_w0 = with_w0
         self.padding = padding
         self.stride = stride
         self.dilation = dilation
         self.groups = groups
+        self._iterable_groups = isinstance(groups, Iterable)
         self.shift_groups = shift_groups
         self.full_groups = full_groups
         self.learnable = learnable
@@ -202,19 +204,12 @@ class SuperONN2d(nn.Module):
         self.new_version = new_version
         
         if isinstance(self.groups, Iterable):
-            val_unique, self._out_idx_map = torch.unique(torch.tensor(self.groups), return_inverse=True)
-            self._in_idx_map = torch.repeat_interleave(self._out_idx_map, torch.tensor(self.groups))
-            self._num_unique_groups = len(val_unique)
-            self.weight = nn.ParameterList()
-            for i in range(self._num_unique_groups):
-                out_idx = torch.where(self._out_idx_map == i)[0]
-                neuron_depth = val_unique[i]  # these neurons are responsible for val_unique[i] channels
-                self.weight.append(nn.Parameter(torch.empty(len(out_idx), neuron_depth, *self.kernel_size, dtype=dtype)))
-                self.bias = nn.Parameter(torch.empty(self.out_channels)) if bias else self.register_parameter('bias', None)
+            # This branch is almost never taken, as groups are rarely an iterable.
+            self._create_weights_for_iterable_groups()
         else:
-            neuron_depth = (in_channels * self.impl_q * full_groups) // groups  # (in_channels * q * full_groups) / groups
+            neuron_depth = (in_channels * self._impl_q * full_groups) // groups  # (in_channels * q * full_groups) / groups
             self.weight = nn.Parameter(torch.empty(self.out_channels, neuron_depth, *self.kernel_size, dtype=dtype))  # Q x C x K x D
-            self.bias = nn.Parameter(torch.empty(self.out_channels)) if bias else self.register_parameter('bias', None)
+            self.bias = nn.Parameter(torch.empty(self.out_channels)) if self.use_bias else self.register_parameter('bias', None)
             
         if self.learnable:
             self.shifts = nn.Parameter(torch.empty(self.full_groups, self.shift_groups, 2))
@@ -224,11 +219,16 @@ class SuperONN2d(nn.Module):
         
         self.reset_parameters()
 
+        # TODO: Slight memory overhead to experiment with shifts. Allows us to see how much the shifts change during training.
+        with torch.no_grad():
+            self.register_buffer('initial_shifts', self.shifts.clone())
+
         if self.verbose:
             import json
             print(f"SuperONN2d initialized with:\n{json.dumps(self.defaults, indent=4)}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # TODO: Subclass SuperONN2d where each subclass handles one of the if statements below. Might be faster if we don't branch in the forward pass.
         N, _, H, W = x.shape
 
         if self.full_groups > 1:
@@ -253,26 +253,14 @@ class SuperONN2d(nn.Module):
             else:
                 x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=2)
             x = x.reshape(N, self.full_groups * self.in_channels * (self.q if not self.with_w0 else (self.q + 1)), H, W) 
-            
         else:
             if self.new_version:
                 x = take_qth_power(x, self.q, with_w0=self.with_w0)
             else:
                 x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=1) 
         
-        if isinstance(self.groups, Iterable):
-            y = []
-            resort_idx = []
-            for i in range(self._num_unique_groups):
-                in_idx = torch.where(self._in_idx_map == i)[0]
-                out_idx = torch.where(self._out_idx_map == i)[0]
-                inp = x[:, in_idx, :, :]
-                out = F.conv2d(inp, self.weight[i], bias=self.bias[out_idx], padding=self.padding, stride=self.stride, dilation=self.dilation, groups=len(out_idx))
-                y.append(out)
-                resort_idx.extend(out_idx.tolist())
-            y = torch.cat(y, dim=1)
-            resort_idx = torch.argsort(torch.tensor(resort_idx))
-            x = y[:, resort_idx, :, :]
+        if self._iterable_groups:
+            x = self._process_iterable_groups(x)
         else:
             x = F.conv2d(x, self.weight, bias=self.bias, padding=self.padding, stride=self.stride, dilation=self.dilation, groups=self.groups)        
         return x
@@ -325,13 +313,52 @@ class SuperONN2d(nn.Module):
                 nn.init.zeros_(bias)
 
     def _even_groups(self, n, g):
-        """Evenly split n into g groups such that the first n % g groups have n // g + 1 elements and the rest have n // g elements."""
+        """ Evenly split n into g groups such that the first n % g groups have n // g + 1 elements and the rest have n // g elements. """
         g = max(min(n, g), 1)  # clamp n, 1
         rem = n % g
         numel = n // g
         groups = torch.cat((torch.tile(torch.torch.Tensor([numel + 1]), (rem,)), 
                             torch.tile(torch.torch.Tensor([numel]), (g - rem,))))
         return groups
+    
+    def _create_weights_for_iterable_groups(self):
+        """ 
+        Creates weights and biases in such a way that an iterable number of groups are processed efficiently. This is accomplished by 
+        processing neurons with the same group size in parallel. This is still highly inefficient, effectively creating N number of layers instead of 1,
+        where N is the number of unique values in groups.
+        """
+        # Find the unique values in groups, e.g. [1,3,2,2,3] -> [1,2,3] and get their inverse indices, e.g. [0,2,1,1,2].
+        # Inverse indices tells us which neurons are processed together., e.g. neuron 0 is in set 0, neurons 2,3 are in set 1, and neurons 1,4 are in set 2.
+        # Inverse indices are also used to correctly resort the output channels back to their original order in forward, as we don't process them in order.
+        val_unique, self._out_idx_map = torch.unique(torch.tensor(self.groups), return_inverse=True)
+        # This duplicates the inverse indices, e.g. [0,2,1,1,2] -> [0,2,2,2,1,1,1,1,2,2,2] allowing us to use it as an index map for the input channels.
+        # E.g. set 0 processes channel 0, set 1 processes channels 4-7, set 2 processes channels 1-3 and 8-10.
+        self._in_idx_map = torch.repeat_interleave(self._out_idx_map, torch.tensor(self.groups))
+        self._num_unique_groups = len(val_unique)
+        # We have a different set of weights for each unique group. Neurons that process the same number of channels are in the same set.
+        # Now we can process neurons with the same group size in parallel. We are looping 3 times instead of 5 times for the example above.
+        # Considering out_channels are usually >=64, this is a significant speedup.
+        self.weight = nn.ParameterList()
+        for i in range(self._num_unique_groups):
+            out_idx = torch.where(self._out_idx_map == i)[0]  # indices of the neurons in set i <--> indices of the output channels
+            neuron_depth = val_unique[i]  # neurons in set i process val_unique[i] many channels each
+            self.weight.append(nn.Parameter(torch.empty(len(out_idx), neuron_depth, *self.kernel_size, dtype=self.dtype)))
+            self.bias = nn.Parameter(torch.empty(self.out_channels)) if self.use_bias else self.register_parameter('bias', None)
+
+    def _process_iterable_groups(self, x):
+        """ Handles iterable groups in a way that neurons with the same group size are processed in parallel. """
+        y = []
+        resort_idx = []
+        for i in range(self._num_unique_groups):
+            in_idx = torch.where(self._in_idx_map == i)[0]  # neurons in set i process channels in_idx
+            out_idx = torch.where(self._out_idx_map == i)[0]  # indices of the neurons in set i <--> indices of the output channels
+            inp = x[:, in_idx, :, :]
+            out = F.conv2d(inp, self.weight[i], bias=self.bias[out_idx], padding=self.padding, stride=self.stride, dilation=self.dilation, groups=len(out_idx))
+            y.append(out)
+            resort_idx.extend(out_idx.tolist())  # keep track of the order of the output channels, as we don't process them in order
+        y = torch.cat(y, dim=1)
+        resort_idx = torch.argsort(torch.tensor(resort_idx))
+        return y[:, resort_idx, :, :]  # resort the output channels to their original order
     
     def extra_repr(self) -> str:
         repr_string = '{in_channels}, {out_channels}, q={q}, kernel_size={kernel_size}, padding={padding}, stride={stride}, dilation={dilation}, max_shift={max_shift}, learnable={learnable}, groups={groups}, full_groups={full_groups}, shift_groups={shift_groups}'
