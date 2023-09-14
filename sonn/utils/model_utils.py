@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.autograd as AG
+import copy
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 def get_num_params(model):
@@ -87,3 +91,46 @@ def print_model_param_info(model, cell_len=30, cell_algn="<", in_filters=None, e
         if is_container:
             final_params = f"{m_params} - C"
         print(f"{type_name:{cell_algn}{cell_len}} {n:{cell_algn}{cell_len}} {final_params:{cell_algn}{cell_len}}")
+
+
+def get_receptive_field(x, model, target_idx=None, absnorm=False):
+    # Input requires grad
+    x = x.requires_grad_(True)
+    # y has grad_fn and requires_grad
+    y = model(x)
+    if target_idx is not None:
+        y = y[target_idx]
+    y = y.view(y.shape[0], -1)
+    grd_center = y.shape[-1] // 2 + x.shape[-1] // 2
+    grd = torch.zeros_like(y)
+    grd[:, grd_center] = 1
+    # grad is calculated, but model weights are untouched, their grad fields are not filled, and y's computation graph is freed
+    grad = AG.grad(y, x, grd)[0]
+    if absnorm:
+        grad = torch.abs(grad)
+        grad = (grad - grad.amin(dim=(2,3), keepdim=True)) / (grad.amax(dim=(2,3), keepdim=True) - grad.amin(dim=(2,3), keepdim=True))
+    return grad
+
+
+def plot_receptive_fields(*models, x):
+    num_models = len(models)
+    rows, cols = [(r, num_models // r) for r in range(1, int(np.sqrt(num_models)) + 1) if num_models % r == 0][-1]
+    if rows == 1:
+        rows = int(np.sqrt(num_models))
+        cols = num_models // rows + 1
+    fig, axs = plt.subplots(rows, cols, figsize=(7 * cols, 5 * rows), squeeze=False)
+
+    for i in range(rows * cols):
+        if i >= num_models:
+            fig.delaxes(axs[i // cols, i % cols])
+            continue
+        model = models[i]
+        rf = get_receptive_field(x, model).abs()
+        rf = (rf - rf.amin(dim=(2,3), keepdim=True)) / (rf.amax(dim=(2,3), keepdim=True) - rf.amin(dim=(2,3), keepdim=True))
+        ax = axs[i // cols, i % cols]
+        ax.imshow(rf[0].permute(1, 2, 0).cpu())
+        ax.set_title(type(model).__name__)
+
+    fig.tight_layout()
+    plt.subplots_adjust(wspace=-0.55, hspace=0.15)
+    plt.show()

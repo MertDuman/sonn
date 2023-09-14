@@ -7,8 +7,10 @@ from collections.abc import Iterable
 from typing import Union
 
 
-def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="zeros"):
+def randomshift_1d(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="zeros"):
+    """ Since grid_sample doesn't work in 1d, we just add a dummy width of 1 to our signals. """
     x = x.moveaxis(0, 1)
+    x = x.unsqueeze(-1)
     # Take the shape of the input
     c, _, h, w = x.size()
 
@@ -21,8 +23,8 @@ def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="z
             torch.round(shifts)
 
     # Normalize the coordinates to [-1, 1] range which is necessary for the grid
-    a_r = shifts[:, :1] / (w / 2)
-    b_r = shifts[:, 1:] / (h / 2)
+    a_r = torch.zeros_like(shifts)
+    b_r = shifts / (h / 2)
 
     # Create the transformation matrix
     aff_mtx = torch.eye(3).to(x.device)
@@ -35,25 +37,27 @@ def randomshift(x, shifts, learnable, max_shift, rounded_shifts, padding_mode="z
 
     # Interpolate the input values
     x = F.grid_sample(x, grid, mode='bilinear', padding_mode=padding_mode, align_corners=False)
+    x = x.squeeze(-1)
     x = x.moveaxis(0, 1)
     return x
 
 
 def take_qth_power(x, q, with_w0=False):
-    if x.ndim == 4:
-        N, C, H, W = x.shape
-    elif x.ndim == 5:
-        N, FG, C, H, W = x.shape
+    if x.ndim == 3:
+        N, C, F = x.shape
+    elif x.ndim == 4:
+        N, FG, C, F = x.shape
     start = 0 if with_w0 else 1
     total = q+1 if with_w0 else q
     x = torch.cat([x**i for i in range(start, q+1)], dim=1)
-    if x.ndim == 4:
-        x = x.reshape(N, total, C, H, W).transpose(1, 2).reshape(N, C*total, H, W)
-    elif x.ndim == 5:
-        x = x.reshape(N, FG, total, C, H, W).transpose(2, 3).reshape(N, FG, C*total, H, W)
+    if x.ndim == 3:
+        x = x.reshape(N, total, C, F).transpose(1, 2).reshape(N, C*total, F)
+    elif x.ndim == 4:
+        x = x.reshape(N, FG, total, C, F).transpose(2, 3).reshape(N, FG, C*total, F)
     return x
 
-class SuperONN2d(nn.Module):
+
+class SuperONN1d(nn.Module):
     """
     Parameters
     ----------
@@ -196,7 +200,7 @@ class SuperONN2d(nn.Module):
 
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.kernel_size = (kernel_size, kernel_size)
+        self.kernel_size = (kernel_size,)
         self.q = q
         self.use_bias = bias
         self.with_w0 = with_w0
@@ -227,10 +231,10 @@ class SuperONN2d(nn.Module):
             self.bias = nn.Parameter(torch.empty(self.out_channels)) if self.use_bias else self.register_parameter('bias', None)
             
         if self.learnable:
-            self.shifts = nn.Parameter(torch.empty(self.full_groups, self.shift_groups, 2))
+            self.shifts = nn.Parameter(torch.empty(self.full_groups, self.shift_groups, 1))
         else:
             # TODO: if max_shift is 0, there is no need to store the shifts
-            self.register_buffer('shifts', torch.empty(self.full_groups, self.shift_groups, 2))
+            self.register_buffer('shifts', torch.empty(self.full_groups, self.shift_groups, 1))
         
         self.reset_parameters()
 
@@ -244,7 +248,7 @@ class SuperONN2d(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # TODO: Subclass SuperONN2d where each subclass handles one of the if statements below. Might be faster if we don't branch in the forward pass.
-        N, _, H, W = x.shape
+        N, _, L = x.shape
 
         if self.full_groups > 1:
             # stack the input full_groups number of times
@@ -253,20 +257,19 @@ class SuperONN2d(nn.Module):
         # No need to shift the input if max_shift is 0
         if self.max_shift > 0:
             # (full_groups, shift_groups, 2) => (full_groups, in_channels, 2) => (full_groups x in_channels, 2)
-            shifts = torch.repeat_interleave(self.shifts, self.in_channels // self.shift_groups, dim=1).reshape(self.full_groups * self.in_channels, 2)
-            x = randomshift(x, shifts * self.max_shift, self.learnable, self.max_shift, self.rounded_shifts, self.fill_mode)  ##### Normalize back to original range!!
-
+            shifts = torch.repeat_interleave(self.shifts, self.in_channels // self.shift_groups, dim=1).reshape(self.full_groups * self.in_channels, 1)
+            x = randomshift_1d(x, shifts * self.max_shift, self.learnable, self.max_shift, self.rounded_shifts, self.fill_mode)  ##### Normalize back to original range!!
 
         if self.full_groups > 1:
-            # (N, full_groups * in_channels, H, W) => (N, full_groups, in_channels, H, W) => 
-            # (N, full_groups, q * in_channels, H, W) => (N, full_groups * q * in_channels, H, W)
-            # We have full_groups many q many in_channels x H x W tensors.
-            x = x.reshape(N, self.full_groups, self.in_channels, H, W)
+            # (N, full_groups * in_channels, L) => (N, full_groups, in_channels, L) =>
+            # (N, full_groups, q * in_channels, L) => (N, full_groups * q * in_channels, L)
+            # We have full_groups many q many in_channels x L tensors.
+            x = x.reshape(N, self.full_groups, self.in_channels, L)
             if self.new_version:
                 x = take_qth_power(x, self.q, with_w0=self.with_w0)
             else:
                 x = torch.cat([(x**i) for i in range(0 if self.with_w0 else 1, self.q + 1)], dim=2)
-            x = x.reshape(N, self.full_groups * self.in_channels * (self.q if not self.with_w0 else (self.q + 1)), H, W) 
+            x = x.reshape(N, self.full_groups * self.in_channels * (self.q if not self.with_w0 else (self.q + 1)), L)
         else:
             if self.new_version:
                 x = take_qth_power(x, self.q, with_w0=self.with_w0)
@@ -276,7 +279,7 @@ class SuperONN2d(nn.Module):
         if self._iterable_groups:
             x = self._process_iterable_groups(x)
         else:
-            x = F.conv2d(x, self.weight, bias=self.bias, padding=self.padding, stride=self.stride, dilation=self.dilation, groups=self.groups)        
+            x = F.conv1d(x, self.weight, bias=self.bias, padding=self.padding, stride=self.stride, dilation=self.dilation, groups=self.groups)
         return x
         
     def reset_parameters(self) -> None:
@@ -366,13 +369,13 @@ class SuperONN2d(nn.Module):
         for i in range(self._num_unique_groups):
             in_idx = torch.where(self._in_idx_map == i)[0]  # neurons in set i process channels in_idx
             out_idx = torch.where(self._out_idx_map == i)[0]  # indices of the neurons in set i <--> indices of the output channels
-            inp = x[:, in_idx, :, :]
-            out = F.conv2d(inp, self.weight[i], bias=self.bias[out_idx], padding=self.padding, stride=self.stride, dilation=self.dilation, groups=len(out_idx))
+            inp = x[:, in_idx, :]
+            out = F.conv1d(inp, self.weight[i], bias=self.bias[out_idx], padding=self.padding, stride=self.stride, dilation=self.dilation, groups=len(out_idx))
             y.append(out)
             resort_idx.extend(out_idx.tolist())  # keep track of the order of the output channels, as we don't process them in order
         y = torch.cat(y, dim=1)
         resort_idx = torch.argsort(torch.tensor(resort_idx))
-        return y[:, resort_idx, :, :]  # resort the output channels to their original order
+        return y[:, resort_idx, :]  # resort the output channels to their original order
     
     def extra_repr(self) -> str:
         repr_string = '{in_channels}, {out_channels}, q={q}, kernel_size={kernel_size}, padding={padding}, stride={stride}, dilation={dilation}, max_shift={max_shift}, learnable={learnable}, groups={groups}, full_groups={full_groups}, shift_groups={shift_groups}'
